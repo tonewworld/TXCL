@@ -6,7 +6,9 @@ scipy
 pillow
 tqdm
 pytest
-
+scikit-image
+scikit-learn
+matplotlib
 # Optional/advanced: BRISQUE/NIQE implementations may require extra packages (pybrisque, piq, or pytorch).
 # Example (only if you need BRISQUE via pybrisque and its deps):
 # pybrisque

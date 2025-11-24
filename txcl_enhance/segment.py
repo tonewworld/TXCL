@@ -115,7 +115,7 @@ def compute_iou(pred: np.ndarray, gt: np.ndarray) -> float:
     return float(inter) / float(union)
 
 
-def segment_defects(img: np.ndarray, win_size: int = 51, t: float = 0.15, mode: str = 'both', min_size: int = 50, open_radius: int = 3, keep_n: int = 3) -> np.ndarray:
+def segment_defects(img: np.ndarray, win_size: int = 41, t: float = 0.1, mode: str = 'both', min_size: int = 50, open_radius: int = 3, keep_n: int = 3) -> np.ndarray:
     """High-level pipeline: take RGB image, return binary mask of defects.
 
     Steps:

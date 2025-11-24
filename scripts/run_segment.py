@@ -1,132 +1,141 @@
-"""Batch segmentation of defects from enhanced or raw images.
-
-Saves binary masks and optional overlay visualization. If a ground-truth mask
-folder is provided (same basenames), computes IoU per-image and prints a
-summary.
-
-Example:
-python scripts\run_segment.py --input data\raw\images --output data\segment --gt data\raw\labels
-python scripts\run_segment.py --input data\raw\images --output data\segment --enhance --method clahe
+"""
+批量运行分割流程，并保存所有中间结果（增强图、掩膜、可视化图）。
+使用方法：
+    python scripts/run_segment.py --input data/raw --output data/results --enhance --win 41 --t 0.1
 """
 import os
 import argparse
 import sys
 import numpy as np
-from typing import List
+import cv2
 
-import os
-import argparse
-import sys
-from typing import List
-import numpy as np
-
-# ensure project root is importable when running from scripts/
+# 确保项目根目录在 python path 中
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from txcl_enhance.utils import read_image, save_image, ensure_uint8
 from txcl_enhance.enhance import enhance_pipeline
 from txcl_enhance.segment import segment_defects, compute_iou
 
-
-def gather_image_files(input_dir: str) -> List[str]:
-    imgs = []
-    if not os.path.isdir(input_dir):
-        return imgs
-    for fname in sorted(os.listdir(input_dir)):
-        if fname.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")):
-            imgs.append(os.path.join(input_dir, fname))
-    return imgs
-
-
 def overlay_mask(img, mask, alpha=0.4):
-    # img: RGB uint8, mask: binary 0/255
-    if img is None:
-        return None
+    if img is None: return None
     vis = img.copy()
-    red = np.zeros_like(vis)
-    red[:, :, 0] = 255
+    # 将掩膜区域涂红
+    red_layer = np.zeros_like(vis)
+    red_layer[:, :, 0] = 0   # B
+    red_layer[:, :, 1] = 0   # G
+    red_layer[:, :, 2] = 255 # R (OpenCV is BGR)
+    
+    # 如果是 RGB 读取的 (txcl_enhance.utils 默认是 RGB)，则：
+    if vis.shape[-1] == 3:
+        # check if read_image returns RGB or BGR. Usually PIL->RGB.
+        # Let's assume RGB for consistency with previous code.
+        red_layer = np.zeros_like(vis)
+        red_layer[:, :, 0] = 255 # R
+    
     m = (mask > 0)
-    vis[m] = (vis[m] * (1 - alpha) + red[m] * alpha).astype('uint8')
+    vis[m] = (vis[m] * (1 - alpha) + red_layer[m] * alpha).astype('uint8')
     return vis
 
+def process(args):
+    input_dir = args.input
+    output_dir = args.output
+    gt_dir = args.gt
+    
+    # 1. 创建输出目录
+    dirs = {
+        'enhanced': os.path.join(output_dir, 'enhanced'),
+        'masks': os.path.join(output_dir, 'masks'),
+        'vis': os.path.join(output_dir, 'vis')
+    }
+    for d in dirs.values():
+        os.makedirs(d, exist_ok=True)
 
-def process(input_dir: str, output_dir: str, gt_dir: str = None, enhance: bool = False, method: str = 'clahe', **kwargs):
-    os.makedirs(output_dir, exist_ok=True)
-    mask_dir = os.path.join(output_dir, 'masks')
-    vis_dir = os.path.join(output_dir, 'vis')
-    os.makedirs(mask_dir, exist_ok=True)
-    os.makedirs(vis_dir, exist_ok=True)
-
-    imgs = gather_image_files(input_dir)
-    if not imgs:
-        print('No images found')
+    # 2. 收集图片
+    valid_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tif'}
+    files = [f for f in os.listdir(input_dir) if os.path.splitext(f)[1].lower() in valid_exts]
+    
+    if not files:
+        print("No images found in input directory.")
         return
 
-    ious = []
-    for p in imgs:
-        name = os.path.basename(p)
-        print('Processing', name)
-        img = read_image(p, as_gray=False)
-        if img is None:
-            print('  failed to read, skipping')
-            continue
-        proc = img
-        if enhance:
-            proc = enhance_pipeline(img, method=method, **kwargs)
-        mask = segment_defects(proc)
-        mask_u8 = ensure_uint8(mask)
-        mask_path = os.path.join(mask_dir, name.rsplit('.', 1)[0] + '.png')
-        save_image(mask_path, mask_u8)
-        # overlay visualization
-        try:
-            import numpy as np
-            vis = overlay_mask(img, mask_u8)
-            vis_path = os.path.join(vis_dir, name)
-            save_image(vis_path, vis)
-        except Exception:
-            pass
+    print(f"Processing {len(files)} images...")
+    print(f"Parameters: Win={args.win}, T={args.t}, Radius={args.open_radius}, MinSize={args.min_size}")
 
-        # compute IoU if ground truth mask exists
+    ious = []
+
+    for name in files:
+        img_path = os.path.join(input_dir, name)
+        img = read_image(img_path, as_gray=False)
+        if img is None: continue
+        
+        # --- 步骤 1: 图像增强 ---
+        proc = img
+        if args.enhance:
+            # 这里可以扩展传入 denoise 等参数，暂时使用默认
+            proc = enhance_pipeline(img, method=args.method)
+            # [新功能] 保存增强后的图片
+            save_image(os.path.join(dirs['enhanced'], name), proc)
+        
+        # --- 步骤 2: 图像分割 ---
+        # 明确传入所有调优参数
+        mask = segment_defects(
+            proc, 
+            win_size=args.win, 
+            t=args.t, 
+            mode=args.mode, 
+            min_size=args.min_size, 
+            open_radius=args.open_radius, 
+            keep_n=args.keep_n
+        )
+        mask_u8 = ensure_uint8(mask)
+        
+        # [保存] 掩膜
+        # 保存为 png 以防压缩损失
+        mask_name = os.path.splitext(name)[0] + ".png"
+        save_image(os.path.join(dirs['masks'], mask_name), mask_u8)
+        
+        # --- 步骤 3: 可视化 ---
+        try:
+            vis = overlay_mask(img, mask_u8)
+            save_image(os.path.join(dirs['vis'], name), vis)
+        except Exception as e:
+            print(f"Vis error on {name}: {e}")
+
+        # --- 步骤 4: (可选) 计算 IoU ---
         if gt_dir:
-            gt_candidate_png = os.path.join(gt_dir, name.rsplit('.', 1)[0] + '.png')
-            gt_candidate_jpg = os.path.join(gt_dir, name)
-            gt_mask = None
-            if os.path.exists(gt_candidate_png):
-                gt_mask = read_image(gt_candidate_png, as_gray=True)
-            elif os.path.exists(gt_candidate_jpg):
-                gt_mask = read_image(gt_candidate_jpg, as_gray=True)
-            if gt_mask is not None:
-                iou = compute_iou(mask_u8, gt_mask)
-                ious.append(iou)
-                print(f'  IoU: {iou:.3f}')
+            gt_path = os.path.join(gt_dir, mask_name)
+            if os.path.exists(gt_path):
+                gt_mask = read_image(gt_path, as_gray=True)
+                if gt_mask is not None:
+                    gt_mask = (gt_mask > 127).astype(np.uint8)
+                    iou = compute_iou(mask_u8, gt_mask)
+                    ious.append(iou)
 
     if ious:
-        import statistics
-        print('\nIoU summary:')
-        print(f'  count: {len(ious)}, mean: {statistics.mean(ious):.3f}, median: {statistics.median(ious):.3f}')
-
-
-def build_parser():
-    p = argparse.ArgumentParser(description='Run segmentation on folder of images')
-    p.add_argument('--input', required=True, help='Input folder')
-    p.add_argument('--output', required=True, help='Output folder')
-    p.add_argument('--gt', required=False, default=None, help='Ground-truth mask folder (optional)')
-    p.add_argument('--enhance', action='store_true', help='Apply enhancement before segmentation')
-    p.add_argument('--method', default='clahe', choices=['clahe', 'he', 'stretch'], help='Enhancement method')
-    p.add_argument('--win', type=int, default=51, help='Bradley window size')
-    p.add_argument('--t', type=float, default=0.15, help='Bradley threshold constant')
-    p.add_argument('--mode', default='both', choices=['lower', 'higher', 'both'], help='Threshold mode: lower (dark defects), higher (bright defects), or both')
-    p.add_argument('--min_size', type=int, default=50, help='Minimum connected component size')
-    p.add_argument('--open_radius', type=int, default=3, help='Opening radius')
-    p.add_argument('--keep_n', type=int, default=3, help='Keep largest N components')
-    return p
-
+        print(f"\nProcessed finished.")
+        print(f"Mean Pixel IoU: {np.mean(ious):.4f}")
+        print(f"Results saved to: {output_dir}")
 
 def main():
-    parser = build_parser()
-    args = parser.parse_args()
-    process(args.input, args.output, gt_dir=args.gt, enhance=args.enhance, method=args.method, win_size=args.win, t=args.t, mode=args.mode, min_size=args.min_size, open_radius=args.open_radius, keep_n=args.keep_n)
-
+    p = argparse.ArgumentParser(description='Batch segmentation with result saving')
+    p.add_argument('--input', required=True, help='Input folder')
+    p.add_argument('--output', required=True, help='Output folder')
+    p.add_argument('--gt', required=False, default=None, help='Ground-truth mask folder')
+    
+    # 增强参数
+    p.add_argument('--enhance', action='store_true', help='Apply enhancement')
+    p.add_argument('--method', default='clahe', choices=['clahe', 'he', 'stretch'])
+    
+    # 分割参数 (调优对象)
+    p.add_argument('--win', type=int, default=51, help='Bradley window size')
+    p.add_argument('--t', type=float, default=0.15, help='Bradley threshold constant')
+    p.add_argument('--mode', default='both', choices=['lower', 'higher', 'both'])
+    p.add_argument('--min_size', type=int, default=50, help='Min component size')
+    p.add_argument('--open_radius', type=int, default=3, help='Opening radius')
+    p.add_argument('--keep_n', type=int, default=3, help='Keep largest N components')
+    
+    args = p.parse_args()
+    process(args)
 
 if __name__ == '__main__':
     main()
