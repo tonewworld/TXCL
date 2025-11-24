@@ -81,7 +81,7 @@ def detect_distortion(img: np.ndarray, contrast_thresh: float = 10.0, blur_thres
     noisy = noise_std > noise_thresh
 
     # suggested mapping (simple heuristic)
-    suggested = {"method": "clahe", "denoise_method": None, "sharpen": True}
+    suggested = {"method": "clahe", "denoise_method": None, "sharpen": False}
     if low_contrast:
         # contrast enhancement (CLAHE preferred for local defects)
         suggested["method"] = "clahe"

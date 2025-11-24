@@ -67,7 +67,7 @@ def denoise(img: np.ndarray, method: str = "median") -> np.ndarray:
     return cv2.GaussianBlur(img, (3, 3), 0)
 
 
-def sharpen_edges(img: np.ndarray, amount: float = 1.0) -> np.ndarray:
+def sharpen_edges(img: np.ndarray, amount: float = 0.5) -> np.ndarray:
     """Unsharp mask style sharpening to emphasize edges."""
     if img is None:
         return None
@@ -76,19 +76,38 @@ def sharpen_edges(img: np.ndarray, amount: float = 1.0) -> np.ndarray:
     return np.clip(sharpened, 0, 255).astype(np.uint8)
 
 
-def enhance_pipeline(img: np.ndarray, method: str = "clahe", denoise_method: str = None, sharpen: bool = True, **kwargs) -> np.ndarray:
-    """High-level pipeline combining methods. method in ['clahe','he','stretch']"""
+def gamma_correction(img: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    """Gamma correction: V_out = V_in ^ (1/gamma). gamma > 1 brightens, gamma < 1 darkens."""
+    if img is None:
+        return None
+    # build lookup table
+    inv_gamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+    return cv2.LUT(img, table)
+
+
+def enhance_pipeline(img: np.ndarray, method: str = "clahe", denoise_method: str = None, sharpen: bool = False, **kwargs) -> np.ndarray:
+    """High-level pipeline combining methods. method in ['clahe','he','stretch','gamma']"""
     if img is None:
         return None
     out = img.copy()
+    
+    # Denoise first to avoid enhancing noise
     if denoise_method:
         out = denoise(out, method=denoise_method)
+        
     if method == "clahe":
-        out = clahe_enhance(out, clip_limit=kwargs.get("clip_limit", 2.0), tile_grid_size=kwargs.get("tile_grid_size", (8, 8)))
+        # Default clip_limit reduced to 2.0, grid size increased to (16,16) for less noise amplification
+        clip = kwargs.get("clip_limit", 2.0)
+        grid = kwargs.get("tile_grid_size", (16, 16))
+        out = clahe_enhance(out, clip_limit=clip, tile_grid_size=grid)
     elif method == "he":
         out = hist_equalization(out)
     elif method == "stretch":
         out = contrast_stretch(out, low_perc=kwargs.get("low_perc", 2), high_perc=kwargs.get("high_perc", 98))
+    elif method == "gamma":
+        out = gamma_correction(out, gamma=kwargs.get("gamma", 1.2))
+        
     if sharpen:
-        out = sharpen_edges(out, amount=kwargs.get("sharpen_amount", 0.8))
+        out = sharpen_edges(out, amount=kwargs.get("sharpen_amount", 0.5))
     return out
