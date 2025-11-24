@@ -5,6 +5,7 @@ matplotlib
 scipy
 pillow
 tqdm
+pytest
 
 # Optional/advanced: BRISQUE/NIQE implementations may require extra packages (pybrisque, piq, or pytorch).
 # Example (only if you need BRISQUE via pybrisque and its deps):

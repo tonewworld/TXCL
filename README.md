@@ -25,6 +25,9 @@ pip install -r requirements.txt
 
 # 批量增强示例
 python scripts\run_enhance.py --input data\raw --output data\processed --method clahe
+
+# 自动检测并选择增强策略（每张图像单独判定）
+python scripts\run_enhance.py --input data\raw --output data\processed --auto
 ```
 
 注意：BRISQUE/NIQE 的 Python 实现依赖项不一，项目提供简单的替代评价方法（对比度、边缘强度等）。如需使用 BRISQUE/NIQE，请按 `evaluate.py` 中注释安装相应包。
